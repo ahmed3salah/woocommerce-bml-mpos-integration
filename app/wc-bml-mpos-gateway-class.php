@@ -143,6 +143,9 @@ class WOOCOMMERCE_BML_MPOS_INTEGRATION extends WC_Payment_Gateway
     public function process_payment($order_id)
     {
 
+
+        var_dump($_FILES);
+        die();
         /**
         * Method Steps
         * 1.Initialization
