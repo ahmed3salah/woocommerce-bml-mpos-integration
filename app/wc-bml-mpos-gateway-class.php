@@ -1,431 +1,603 @@
 <?php
 
 /**
- * Woocommerce Payment Gateway Object
+ * Woocommerce Payment Gateway Object for BML Connect API v2.0
+ * Updated to support latest BML Connect API features and security standards
  */
-
 
 use BMLConnect\Client;
 
 class WOOCOMMERCE_BML_MPOS_INTEGRATION extends WC_Payment_Gateway
 {
-
-    function __construct()
+    /**
+     * Class constructor
+     */
+    public function __construct()
     {
-
-        // global ID
+        // Gateway configuration
         $this->id = "woocommerce_bml_mpos_integration";
-        // Title of Gateway
-        $this->method_title = __("BML mPOS Payment", 'woocommerce_bml_mpos_integration');
-        // Gateway Description
-        $this->method_description = __("BML mPOS Payment Gateway Plug-in for WooCommerce (This Plugin is developed by a 3rd party and is in no way related to Bank of Maldives)", 'woocommerce_bml_mpos_integration');
-        // Title in the vertical tab
-        $this->title = __("BML mPOS", 'woocommerce_bml_mpos_integration');
-        //Will not have fields on user side, routed to gateway for payment
+        $this->method_title = __("BML Connect Payment", 'woocommerce_bml_mpos_integration');
+        $this->method_description = __("BML Connect Payment Gateway for WooCommerce - Secure payments via Bank of Maldives Connect API v2.0", 'woocommerce_bml_mpos_integration');
+        $this->title = __("BML Payment", 'woocommerce_bml_mpos_integration');
         $this->has_fields = false;
 
-        // Code to add support form if required
-        // $this->supports = array( 'default_credit_card_form' );
+        // Supported features
+        $this->supports = array(
+            'products',
+            'refunds'
+        );
 
-        // initialize form fields
+        // Initialize form fields and settings
         $this->init_form_fields();
-        // create the settings object
         $this->init_settings();
 
-        // Add all settings into the vairables of the object
-        foreach ($this->settings as $setting_key => $value)
-        {
+        // Load settings into object properties
+        foreach ($this->settings as $setting_key => $value) {
             $this->$setting_key = $value;
         }
 
-        // Code if doing ssl checks in future
-        //add_action( 'admin_notices', array( $this,  'do_ssl_check' ) );
+        // API response handler
+        add_action('woocommerce_api_' . strtolower(get_class($this)), array($this, 'handle_api_callback'));
 
-        //Add the EventListener to listen for redirect urls comming from the bml gateway
-        add_action('woocommerce_api_' . strtolower(get_class($this)) , array(
-            $this,
-            'check_bml_response_message'
-        ));
+        // Webhook handler for real-time notifications
+        add_action('woocommerce_api_bml_webhook', array($this, 'handle_webhook'));
 
-
-        // Save settings
-        if (is_admin())
-        {
-            add_action('woocommerce_update_options_payment_gateways_' . $this->id, array(
-                $this,
-                'process_admin_options'
-            ));
+        // Admin settings save
+        if (is_admin()) {
+            add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
         }
 
-        //display icon
-        $displayIcon = ($this->icon_at_checkout == "yes") ? 'TRUE' : 'FALSE';
-        $displayIconType = ("FALSE" == $displayIcon) ? null : apply_filters( 'woocommerce_gateway_icon', plugin_dir_url( __FILE__ ) . 'icons/Payment Gateway logos_1.png' );
-
-
-        //icon
-        $this->icon = $displayIconType;
-
-
-
+        // Display icon configuration
+        $this->setup_icon();
     }
 
+    /**
+     * Setup gateway icon
+     */
+    private function setup_icon()
+    {
+        if ($this->icon_at_checkout === 'yes') {
+            $this->icon = apply_filters(
+                'woocommerce_gateway_icon',
+                plugin_dir_url(__FILE__) . 'icons/Payment Gateway logos_1.png'
+            );
+        }
+    }
 
     /**
-     * Administration fields for the gateway
-     * @param void no input
-     * @return void no input
+     * Initialize form fields for admin settings
      */
     public function init_form_fields()
     {
         $this->form_fields = array(
             'enabled' => array(
-                'title' => __('Enable / Disable', 'woocommerce_bml_mpos_integration') ,
-                'label' => __('Enable this payment gateway', 'woocommerce_bml_mpos_integration') ,
+                'title' => __('Enable/Disable', 'woocommerce_bml_mpos_integration'),
+                'label' => __('Enable BML Connect Payment Gateway', 'woocommerce_bml_mpos_integration'),
                 'type' => 'checkbox',
                 'default' => 'no',
-            ) ,
+            ),
             'title' => array(
-                'title' => __('Title', 'woocommerce_bml_mpos_integration') ,
+                'title' => __('Title', 'woocommerce_bml_mpos_integration'),
                 'type' => 'text',
-                'desc_tip' => __('Payment title of checkout process.', 'woocommerce_bml_mpos_integration') ,
-                'default' => __('Credit Card', 'woocommerce_bml_mpos_integration') ,
-            ) ,
+                'desc_tip' => __('Payment method title shown to customers during checkout.', 'woocommerce_bml_mpos_integration'),
+                'default' => __('BML Payment', 'woocommerce_bml_mpos_integration'),
+            ),
             'description' => array(
-                'title' => __('Description', 'woocommerce_bml_mpos_integration') ,
+                'title' => __('Description', 'woocommerce_bml_mpos_integration'),
                 'type' => 'textarea',
-                'desc_tip' => __('Payment title of checkout process.', 'woocommerce_bml_mpos_integration') ,
-                'default' => __('Payment via credit card.', 'woocommerce_bml_mpos_integration') ,
+                'desc_tip' => __('Payment method description shown to customers.', 'woocommerce_bml_mpos_integration'),
+                'default' => __('Pay securely using BML Connect payment gateway.', 'woocommerce_bml_mpos_integration'),
                 'css' => 'max-width:450px;'
-            ) ,
+            ),
             'icon_at_checkout' => array(
-                'title' => __('Display Icon at checkout', 'woocommerce_bml_mpos_integration') ,
-                'label' => __('Display the BML Logo alongside accepted payment methods during checkout', 'woocommerce_bml_mpos_integration') ,
+                'title' => __('Display Icon', 'woocommerce_bml_mpos_integration'),
+                'label' => __('Show BML logo at checkout', 'woocommerce_bml_mpos_integration'),
                 'type' => 'checkbox',
                 'default' => 'yes',
-            ) ,
-            'api_login' => array(
-                'title' => __('BML mPOS API Login', 'woocommerce_bml_mpos_integration') ,
-                'type' => 'text',
-                'desc_tip' => __('This is the API Login provided for BML mPOS when you signed up for an account.', 'woocommerce_bml_mpos_integration') ,
-            ) ,
+            ),
             'api_key' => array(
-                'title' => __('BML mPOS API Key', 'woocommerce_bml_mpos_integration') ,
+                'title' => __('API Key (Client Secret)', 'woocommerce_bml_mpos_integration'),
                 'type' => 'password',
-                'desc_tip' => __('This is the API Key provided by BML when you signed up for the account.', 'woocommerce_bml_mpos_integration') ,
-            ) ,
-            'security' => array(
-                'title' => __('Security Level', 'woocommerce_bml_mpos_integration') ,
-                'label' => __('Set Security Level', 'woocommerce_bml_mpos_integration') ,
+                'desc_tip' => __('Your BML Connect API Key (Client Secret) from the merchant portal.', 'woocommerce_bml_mpos_integration'),
+            ),
+            'app_id' => array(
+                'title' => __('App ID (Client ID)', 'woocommerce_bml_mpos_integration'),
+                'type' => 'text',
+                'desc_tip' => __('Your BML Connect App ID (Client ID) from the merchant portal.', 'woocommerce_bml_mpos_integration'),
+            ),
+            'provider' => array(
+                'title' => __('Payment Provider', 'woocommerce_bml_mpos_integration'),
                 'type' => 'select',
                 'options' => array(
-                    0 => __('Standard', 'woocommerce_bml_mpos_integration') ,
-                    1 => __('Strong', 'woocommerce_bml_mpos_integration') ,
-                    2 => __('Strongest (Recommended)', 'woocommerce_bml_mpos_integration') ,
-                ) ,
-                'description' => __('Set the security Level of the Gateway.', 'woocommerce_bml_mpos_integration') ,
-                'default' => 2,
-            ) ,
+                    '' => __('Let customer choose', 'woocommerce_bml_mpos_integration'),
+                    'bml_epos' => __('BML ePOS', 'woocommerce_bml_mpos_integration'),
+                    'alipay' => __('Alipay', 'woocommerce_bml_mpos_integration'),
+                    'card' => __('Credit/Debit Card', 'woocommerce_bml_mpos_integration'),
+                ),
+                'desc_tip' => __('Choose a specific payment method or let customer select.', 'woocommerce_bml_mpos_integration'),
+                'default' => '',
+            ),
             'environment' => array(
-                'title' => __('BML mPOS Test Mode', 'woocommerce_bml_mpos_integration') ,
-                'label' => __('Enable Test Mode', 'woocommerce_bml_mpos_integration') ,
+                'title' => __('Environment', 'woocommerce_bml_mpos_integration'),
+                'label' => __('Enable Sandbox Mode', 'woocommerce_bml_mpos_integration'),
                 'type' => 'checkbox',
-                'description' => __('This is the test mode of gateway.', 'woocommerce_bml_mpos_integration') ,
+                'description' => __('Use sandbox environment for testing.', 'woocommerce_bml_mpos_integration'),
+                'default' => 'yes',
+            ),
+            'webhook_secret' => array(
+                'title' => __('Webhook Secret', 'woocommerce_bml_mpos_integration'),
+                'type' => 'text',
+                'desc_tip' => __('Optional webhook secret for additional security. Leave empty if not using webhooks.', 'woocommerce_bml_mpos_integration'),
+            ),
+            'debug_mode' => array(
+                'title' => __('Debug Mode', 'woocommerce_bml_mpos_integration'),
+                'label' => __('Enable debug logging', 'woocommerce_bml_mpos_integration'),
+                'type' => 'checkbox',
+                'description' => __('Log all payment interactions for debugging.', 'woocommerce_bml_mpos_integration'),
                 'default' => 'no',
-            )
+            ),
         );
     }
 
     /**
-     * Method to process payment when the user clicks the Pay button
-     * @param integer $order_id the order ID
-     * @return array an array of the result of the function and redirect url
+     * Process payment when customer clicks Pay button
      */
     public function process_payment($order_id)
     {
+        try {
+            $customer_order = wc_get_order($order_id);
 
-        /**
-        * Method Steps
-        * 1.Initialization
-        * 2. If Transaction exists and conditions fulfilled, redirect the user to that transaction
-        * 3. Otherwise, create a new transaction
-        * 4. Save important details of the transaction
-        * 5. Direct the user to the new payment
-        */
+            if (!$customer_order) {
+                throw new Exception('Order not found');
+            }
 
-        /**
-        * 1. Initialization
-        */
+            // Validate order amount
+            $amount = intval(round($customer_order->get_total() * 100));
+            if ($amount < 100) {
+                throw new Exception('Minimum payment amount is 1.00 MVR');
+            }
 
-        global $woocommerce;
-
-        $api_key = $this->api_key;
-        $app_id = $this->api_login;
-
-        $customer_order = new WC_Order($order_id);
-
-        $amount = round(($customer_order->get_total() * 100) , 0);
-        $currency = $customer_order->get_currency();
-        $signature = sha1('amount=' . $amount . '&currency=' . $currency . '&apiKey=' . $api_key, false);
-        $securitysignature = sha1($customer_order->get_data() ['cart_hash'] . wp_salt() , false);
-        $validationSignature = sha1($customer_order->get_id() . $signature . $api_key, false);
-
-        // check if environment is sandbox or production
-        $environment = ($this->environment == "yes") ? 'TRUE' : 'FALSE';
-        $environmentType = ("FALSE" == $environment) ? 'production' : 'sandbox';
-
-        /**
-        * 2. If Transaction exists and conditions fulfilled, redirect the user to that transaction
-        */
-        if (!empty($customer_order->get_transaction_id()))
-        {
-
-            $client = new Client($api_key, $app_id, $environmentType);
-            $transactionVerification = $client
-                ->transactions
-                ->get($customer_order->get_transaction_id());
-            $verificationAmount = round(($customer_order->get_total() * 100) , 0);
-
-            if ($transactionVerification->amount == $amount && $currency == $transactionVerification->currency && ($transactionVerification->state == "INITIATED" || $transactionVerification->state == 'QR_CODE_GENERATED'))
-            {
+            // Check for existing valid transaction
+            $existing_transaction = $this->get_existing_transaction($customer_order, $amount);
+            if ($existing_transaction) {
                 return array(
                     'result' => 'success',
-                    'redirect' => $transactionVerification->url,
+                    'redirect' => $existing_transaction->url,
                 );
             }
 
+            // Create new transaction
+            $transaction = $this->create_new_transaction($customer_order, $amount);
+
+            // Save transaction details
+            $this->save_transaction_data($customer_order, $transaction);
+
+            return array(
+                'result' => 'success',
+                'redirect' => $transaction->url,
+            );
+        } catch (Exception $e) {
+            $this->log_error('Payment processing failed: ' . $e->getMessage());
+            wc_add_notice(__('Payment failed. Please try again.', 'woocommerce_bml_mpos_integration'), 'error');
+            return array('result' => 'failure');
         }
-
-        /**
-        * 3. Otherwise, create a new transaction
-        */
-
-        //create the redirect url
-        $checkOutPaymentUrl = add_query_arg(array(
-            'wc-api' => strtolower(get_class($this)) ,
-            'orderId' => $order_id,
-            'securitySignature' => $securitysignature,
-        ) , home_url('/'));
-
-        //initialize the client
-        $client = new Client($api_key, $app_id, $environmentType);
-
-        $json = ["currency" => $currency, "amount" => $amount,
-        "redirectUrl" => $checkOutPaymentUrl,
-        "localId" => $customer_order->get_id() ,
-        "customerReference" => $customer_order->get_id() . "_" . $validationSignature,
-        "redirectUrl" => $checkOutPaymentUrl
-        ];
-
-        //create the transaction
-        $transaction = $client
-            ->transactions
-            ->create($json);
-
-        /**
-        * 4. Save important details of the transaction
-        */
-        $currentTransactionList = $customer_order->get_meta('all_transaction_ids', true, 'view');
-
-        if (empty($currentTransactionList))
-        {
-            $customer_order->add_meta_data('all_transaction_ids', $transaction->id, true);
-        }
-        else
-        {
-            $customer_order->add_meta_data('all_transaction_ids', $currentTransactionList . ', ' . $transaction->id, true);
-        }
-
-        $customer_order->set_transaction_id($transaction->id);
-
-        $customer_order->save();
-
-        /**
-        * 5. Direct the user to the new payment
-        */
-        return array(
-            'result' => 'success',
-            'redirect' => $transaction->url,
-        );
-
     }
 
     /**
-     * Listener Method that will process the return url from the payment gateway
-     * @param void no input
-     * @return void no output
+     * Check for existing valid transaction
      */
-    function check_bml_response_message()
+    private function get_existing_transaction($order, $amount)
     {
-        /**
-        * Method Steps
-        * 1. Initialize the required fields and get the Url queries
-        * 2. Define the function that checks the url integrity
-        * 3. Check url integrity, redirect to home page if integrity is not verified
-        * 4. Once integrity is verified, then proceed with processing the order
-        */
+        $transaction_id = $order->get_transaction_id();
 
-        /**
-        * 1. Initialize the required fields and get the Url queries
-        */
-        global $woocommerce;
+        if (empty($transaction_id)) {
+            return null;
+        }
 
-        $payment_gateway = WC()
-            ->payment_gateways
-            ->payment_gateways() ['woocommerce_bml_mpos_integration'];
+        try {
+            $client = $this->get_api_client();
+            $transaction = $client->transactions->get($transaction_id);
 
-        $paymentGatewaySecurityLevel = $payment_gateway->security;
+            // Verify transaction is valid and reusable
+            if (
+                $transaction->amount == $amount &&
+                $transaction->currency == $order->get_currency() &&
+                in_array($transaction->state, ['INITIATED', 'QR_CODE_GENERATED'])
+            ) {
+                return $transaction;
+            }
+        } catch (Exception $e) {
+            $this->log_error('Failed to fetch existing transaction: ' . $e->getMessage());
+        }
 
-        $queryData = $_GET;
+        return null;
+    }
 
-        /**
-        * 2. Define the function that checks the url integrity
-        */
-        if (!function_exists("bmlUrlTampered"))
-        {
+    /**
+     * Create new BML Connect transaction
+     */
+    private function create_new_transaction($order, $amount)
+    {
+        $client = $this->get_api_client();
 
-            function bmlUrlTampered($queryData, $localWooCommerceOrder)
-            {
-                //initialize
-                $api_key = $payment_gateway->api_key;
-                $app_id = $payment_gateway->api_login;
+        // Prepare transaction data according to API v2.0
+        $transaction_data = array(
+            'amount' => $amount,
+            'currency' => $order->get_currency(),
+            'localId' => strval($order->get_id()),
+            'customerReference' => sprintf('Order #%s', $order->get_order_number()),
+            'redirectUrl' => $this->get_callback_url($order->get_id()),
+            'signature' => $this->generate_signature($amount, $order->get_currency()),
+            'deviceId' => $this->app_id,
+            'appVersion' => 'WooCommerce-BML-v2.0',
+            'apiVersion' => '2.0',
+            'signMethod' => 'sha1'
+        );
 
-                $amount = round(($localWooCommerceOrder->get_total() * 100) , 0);
-                $currency = $localWooCommerceOrder->get_currency();
+        // Add provider if specified
+        if (!empty($this->provider)) {
+            $transaction_data['provider'] = $this->provider;
+        }
 
-                $signature = sha1('amount=' . $amount . '&currency=' . $currency . '&apiKey=' . $api_key, false);
-                $securitysignature = sha1($localWooCommerceOrder->get_data() ['cart_hash'] . wp_salt() , false);
-                $validationSignature = sha1($localWooCommerceOrder->get_id() . $signature . $api_key, false);
+        return $client->transactions->create($transaction_data);
+    }
 
-                $orderStatus = strtolower($localWooCommerceOrder->get_data() ['status']);
+    /**
+     * Save transaction data to order
+     */
+    private function save_transaction_data($order, $transaction)
+    {
+        $order->set_transaction_id($transaction->id);
 
-                /* --------------------- Verification Process -------------------------*/
-                // Verify if the BML standard signatures match
-                if ($queryData['signature'] <> $signature)
-                {
+        // Save transaction history
+        $existing_transactions = $order->get_meta('_bml_transaction_ids', true);
+        $transaction_list = $existing_transactions ? $existing_transactions . ',' . $transaction->id : $transaction->id;
+        $order->update_meta_data('_bml_transaction_ids', $transaction_list);
 
-                    return true;
-                }
+        // Save transaction details for reference
+        $order->update_meta_data('_bml_transaction_data', array(
+            'id' => $transaction->id,
+            'amount' => $transaction->amount,
+            'currency' => $transaction->currency,
+            'state' => $transaction->state,
+            'created' => current_time('mysql')
+        ));
 
-                //Verify the custom signatures produced by this plugin if plugin security is set to Strong
-                if ($queryData['securitySignature'] <> $securitysignature && $paymentGatewaySecurityLevel > 0)
-                {
+        $order->save();
 
-                    return true;
+        $this->log_info("Transaction created: {$transaction->id} for order: {$order->get_id()}");
+    }
 
-                }
+    /**
+     * Get API client instance
+     */
+    private function get_api_client()
+    {
+        $environment = ($this->environment === 'yes') ? 'sandbox' : 'production';
+        return new Client($this->api_key, $this->app_id, $environment);
+    }
 
-                //Query the gateway to confirm the payment status, if plugin security is set to Strongest
-                if ($paymentGatewaySecurityLevel > 1)
-                {
+    /**
+     * Generate callback URL for order
+     */
+    private function get_callback_url($order_id)
+    {
+        return add_query_arg(array(
+            'wc-api' => strtolower(get_class($this)),
+            'order_id' => $order_id,
+            'security' => wp_create_nonce('bml_callback_' . $order_id)
+        ), home_url('/'));
+    }
 
+    /**
+     * Generate transaction signature
+     */
+    private function generate_signature($amount, $currency)
+    {
+        $data = "amount={$amount}&currency={$currency}&apiKey={$this->api_key}";
+        return sha1($data);
+    }
 
-                    $environment = ($payment_gateway->environment == "yes") ? 'TRUE' : 'FALSE';
-                    $environmentType = ("FALSE" == $environment) ? 'production' : 'sandbox';
+    /**
+     * Handle API callback from BML Connect
+     */
+    public function handle_api_callback()
+    {
+        try {
+            $this->log_info('API callback received: ' . print_r($_GET, true));
 
-                    //Cross verify with BML if the payment was actually made
-                    $client = new Client($api_key, $app_id, $environmentType);
+            // Validate callback parameters
+            if (!isset($_GET['order_id'], $_GET['security'])) {
+                throw new Exception('Missing required callback parameters');
+            }
 
-                    $transaction = $client
-                        ->transactions
-                        ->get($queryData['transactionId']);
+            $order_id = intval($_GET['order_id']);
+            $security = sanitize_text_field($_GET['security']);
 
-                    $urltransactionState = strtolower($queryData['state']);
-                    $endpointTransactionState = strtolower($transaction->state);
+            // Verify nonce
+            if (!wp_verify_nonce($security, 'bml_callback_' . $order_id)) {
+                throw new Exception('Security verification failed');
+            }
 
-                    $transactionValidationSignature = '';
+            $order = wc_get_order($order_id);
+            if (!$order) {
+                throw new Exception('Order not found');
+            }
 
-                    if (!empty($transaction->customerReference))
-                    {
-                        //Get the first occurrence of a character.
-                        $strpos = strpos($transaction->customerReference, '_');
+            // Process payment result
+            $this->process_payment_callback($order, $_GET);
+        } catch (Exception $e) {
+            $this->log_error('Callback processing failed: ' . $e->getMessage());
+            wp_die('Callback processing failed', 'Payment Error', array('response' => 400));
+        }
+    }
 
-                        $transactionValidationSignature = substr($transaction->customerReference, ($strpos));
-
-                    }
-
-                    //Verify if signature on both sides match, also verify if current state on both sides match
-                    if ($transactionValidationSignature != $validationSignature || $urltransactionState != $endpointTransactionState)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-
+    /**
+     * Process payment callback result
+     */
+    private function process_payment_callback($order, $callback_data)
+    {
+        // Validate signature if present
+        if (isset($callback_data['signature'])) {
+            if (!$this->verify_callback_signature($order, $callback_data)) {
+                throw new Exception('Signature verification failed');
             }
         }
 
-        /**
-        * 3. Check url integrity, redirect to home page if integrity is not verified
-        */
-        $order = new WC_Order($queryData['orderId']);
+        $state = isset($callback_data['state']) ? strtolower(sanitize_text_field($callback_data['state'])) : '';
+        $transaction_id = isset($callback_data['transactionId']) ? sanitize_text_field($callback_data['transactionId']) : '';
 
-        if (empty($queryData['orderId']) || empty($order))
-        {
-            wp_redirect(home_url('/'));
-        }
-
-        if (bmlUrlTampered($queryData, $order))
-        {
-            wp_redirect(home_url('/'));
-        }
-
-        /**
-        * 4. Once integrity is verified, then proceed with processing the order
-        */
-
-        switch (strtolower($queryData['state']))
-        {
-            case 'cancelled':
-                write_log('the order has been cancelled');
-                wp_redirect($order->get_cancel_order_url());
-            break;
+        switch ($state) {
             case 'confirmed':
-                write_log('the order has been confirmed');
+                $this->handle_payment_confirmed($order, $transaction_id);
+                break;
 
-                //set the order to payment complete and enpty the cart
-                $order->payment_complete($queryData['transactionId']);
-                $woocommerce
-                    ->cart
-                    ->empty_cart();
+            case 'cancelled':
+                $this->handle_payment_cancelled($order);
+                break;
 
-                wp_redirect($order->get_checkout_order_received_url());
-            break;
             default:
-                write_log('the order has another response');
-                //if any other status code, redirect to cancel order page only if the order is not paid as of yet
-                if ($order->get_data() ['status'] != 'processing' && $order->get_data() ['status'] != 'completed')
-                {
-                    //  $order->update_status('failed');
-                    wp_redirect($order->get_cancel_order_url());
-                }
-                else
-                {
-                    wp_redirect(home_url('/'));
-                }
-            break;
+                $this->handle_payment_failed($order, $state);
+                break;
         }
-
-        die('OK');
-
     }
 
-    // SSL check is will be included but not used at the moment
-    /*
-     * @param void no input
-     * @return void no input
+    /**
+     * Handle confirmed payment
      */
+    private function handle_payment_confirmed($order, $transaction_id)
+    {
+        if ($order->get_status() === 'processing' || $order->get_status() === 'completed') {
+            wp_redirect($order->get_checkout_order_received_url());
+            exit;
+        }
 
+        $order->payment_complete($transaction_id);
+        $order->add_order_note(__('Payment confirmed via BML Connect.', 'woocommerce_bml_mpos_integration'));
+
+        WC()->cart->empty_cart();
+
+        $this->log_info("Payment confirmed for order: {$order->get_id()}, transaction: {$transaction_id}");
+
+        wp_redirect($order->get_checkout_order_received_url());
+        exit;
+    }
+
+    /**
+     * Handle cancelled payment
+     */
+    private function handle_payment_cancelled($order)
+    {
+        $order->add_order_note(__('Payment cancelled by customer.', 'woocommerce_bml_mpos_integration'));
+        wp_redirect($order->get_cancel_order_url());
+        exit;
+    }
+
+    /**
+     * Handle failed payment
+     */
+    private function handle_payment_failed($order, $state)
+    {
+        $order->add_order_note(sprintf(__('Payment failed with state: %s', 'woocommerce_bml_mpos_integration'), $state));
+
+        if (!in_array($order->get_status(), ['processing', 'completed'])) {
+            wp_redirect($order->get_cancel_order_url());
+        } else {
+            wp_redirect(home_url('/'));
+        }
+        exit;
+    }
+
+    /**
+     * Verify callback signature
+     */
+    private function verify_callback_signature($order, $callback_data)
+    {
+        if (!isset($callback_data['signature'])) {
+            return false;
+        }
+
+        $amount = intval(round($order->get_total() * 100));
+        $expected_signature = $this->generate_signature($amount, $order->get_currency());
+
+        return hash_equals($expected_signature, $callback_data['signature']);
+    }
+
+    /**
+     * Handle webhook notifications (real-time payment updates)
+     */
+    public function handle_webhook()
+    {
+        try {
+            $payload = file_get_contents('php://input');
+            $data = json_decode($payload, true);
+
+            if (!$data) {
+                throw new Exception('Invalid webhook payload');
+            }
+
+            $this->log_info('Webhook received: ' . $payload);
+
+            // Verify webhook signature if secret is configured
+            if (!empty($this->webhook_secret)) {
+                $this->verify_webhook_signature($payload);
+            }
+
+            // Process webhook data
+            $this->process_webhook_data($data);
+
+            http_response_code(200);
+            echo 'OK';
+            exit;
+        } catch (Exception $e) {
+            $this->log_error('Webhook processing failed: ' . $e->getMessage());
+            http_response_code(400);
+            echo 'Error: ' . $e->getMessage();
+            exit;
+        }
+    }
+
+    /**
+     * Process webhook notification data
+     */
+    private function process_webhook_data($data)
+    {
+        if (!isset($data['localId']) || !isset($data['state'])) {
+            throw new Exception('Missing required webhook data');
+        }
+
+        $order_id = intval($data['localId']);
+        $order = wc_get_order($order_id);
+
+        if (!$order) {
+            throw new Exception('Order not found: ' . $order_id);
+        }
+
+        $state = strtolower($data['state']);
+        $transaction_id = isset($data['transactionId']) ? $data['transactionId'] : '';
+
+        // Update order based on webhook state
+        switch ($state) {
+            case 'confirmed':
+                if (!in_array($order->get_status(), ['processing', 'completed'])) {
+                    $order->payment_complete($transaction_id);
+                    $order->add_order_note(__('Payment confirmed via webhook.', 'woocommerce_bml_mpos_integration'));
+                }
+                break;
+
+            case 'cancelled':
+                if ($order->get_status() === 'pending') {
+                    $order->update_status('cancelled', __('Payment cancelled via webhook.', 'woocommerce_bml_mpos_integration'));
+                }
+                break;
+
+            case 'refunded':
+                if (in_array($order->get_status(), ['processing', 'completed'])) {
+                    $order->update_status('refunded', __('Payment refunded via webhook.', 'woocommerce_bml_mpos_integration'));
+                }
+                break;
+        }
+
+        $this->log_info("Webhook processed for order: {$order_id}, state: {$state}");
+    }
+
+    /**
+     * Verify webhook signature
+     */
+    private function verify_webhook_signature($payload)
+    {
+        $headers = getallheaders();
+        $signature = isset($headers['X-BML-Signature']) ? $headers['X-BML-Signature'] : '';
+
+        if (empty($signature)) {
+            throw new Exception('Missing webhook signature');
+        }
+
+        $expected_signature = hash_hmac('sha256', $payload, $this->webhook_secret);
+
+        if (!hash_equals($expected_signature, $signature)) {
+            throw new Exception('Webhook signature verification failed');
+        }
+    }
+
+    /**
+     * Process refund (if supported by BML Connect API)
+     */
+    public function process_refund($order_id, $amount = null, $reason = '')
+    {
+        $order = wc_get_order($order_id);
+
+        if (!$order) {
+            return new WP_Error('error', 'Order not found');
+        }
+
+        $transaction_id = $order->get_transaction_id();
+
+        if (empty($transaction_id)) {
+            return new WP_Error('error', 'No transaction ID found for this order');
+        }
+
+        try {
+            // Note: Implement refund logic based on BML Connect API capabilities
+            // Currently, BML Connect API documentation doesn't show direct refund endpoint
+            // This would need to be handled manually through BML merchant portal
+
+            $order->add_order_note(sprintf(
+                __('Refund requested: %s %s. Reason: %s. Please process manually through BML merchant portal.', 'woocommerce_bml_mpos_integration'),
+                $amount ? wc_price($amount) : wc_price($order->get_total()),
+                $order->get_currency(),
+                $reason
+            ));
+
+            return new WP_Error('error', 'Please process refund manually through BML merchant portal');
+        } catch (Exception $e) {
+            $this->log_error('Refund failed: ' . $e->getMessage());
+            return new WP_Error('error', 'Refund failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Log informational message
+     */
+    private function log_info($message)
+    {
+        if ($this->debug_mode === 'yes') {
+            $this->log($message, 'info');
+        }
+    }
+
+    /**
+     * Log error message
+     */
+    private function log_error($message)
+    {
+        $this->log($message, 'error');
+    }
+
+    /**
+     * Log message to WooCommerce logs
+     */
+    private function log($message, $level = 'info')
+    {
+        if (function_exists('wc_get_logger')) {
+            $logger = wc_get_logger();
+            $logger->log($level, $message, array('source' => 'bml-connect'));
+        } else {
+            error_log("BML Connect [{$level}]: {$message}");
+        }
+    }
+
+    /**
+     * SSL check for admin notices
+     */
     public function do_ssl_check()
     {
-        if ($this->enabled == "yes")
-        {
-            if (get_option('woocommerce_force_ssl_checkout') == "no")
-            {
-                echo "<div class=\"error\"><p>" . sprintf(__("<strong>%s</strong> is enabled and WooCommerce is not forcing the SSL certificate on your checkout page. Please ensure that you have a valid SSL certificate and that you are <a href=\"%s\">forcing the checkout pages to be secured.</a>") , $this->method_title, admin_url('admin.php?page=wc-settings&tab=checkout')) . "</p></div>";
-            }
+        if ($this->enabled === 'yes' && get_option('woocommerce_force_ssl_checkout') === 'no') {
+            echo '<div class="error"><p>' . sprintf(
+                __('<strong>%s</strong> is enabled but SSL is not enforced. Please ensure you have a valid SSL certificate and <a href="%s">force SSL on checkout pages</a>.', 'woocommerce_bml_mpos_integration'),
+                $this->method_title,
+                admin_url('admin.php?page=wc-settings&tab=checkout')
+            ) . '</p></div>';
         }
     }
-
 }
-?>
