@@ -276,7 +276,7 @@ We welcome contributions to improve this plugin. Please follow these guidelines:
 
 ```bash
 # Clone repository
-git clone https://github.com/your-repo/bml-woocommerce.git
+git clone https://github.com/ahmed3salah/woocommerce-bml-mpos-integration.git
 
 # Install development dependencies
 composer install
@@ -297,8 +297,7 @@ This plugin is developed independently and is not officially endorsed by Bank of
 
 ### Community Support
 
-- **GitHub Issues**: [Report bugs or request features](https://github.com/your-repo/bml-woocommerce/issues)
-- **WordPress Support**: [Plugin support forum](https://wordpress.org/support/plugin/bml-connect-woocommerce/)
+- **GitHub Issues**: [Report bugs or request features](https://github.com/ahmed3salah/woocommerce-bml-mpos-integration/issues)
 
 ### Commercial Support
 
