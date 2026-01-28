@@ -307,7 +307,6 @@ For priority support, custom modifications, or consulting services, please conta
 
 For issues related to the BML Connect API itself, please contact Bank of Maldives directly:
 
-- **Email**: ahmed3salah311@gmail.com
 - **Merchant Portal**: [https://dashboard.merchants.bankofmaldives.com.mv](https://dashboard.merchants.bankofmaldives.com.mv)
 
 ---
